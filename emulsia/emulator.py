@@ -3,7 +3,10 @@ from capstone import *
 
 from unicorn.arm_const import *
 
-from .memory_viewer import MemoryViewer
+from colorama import init
+from termcolor import colored, cprint
+
+from .memory_viewer import MemoryViewer, MemoryType, MemoryAccess
 from .call_viewer import CallViewer
 
 
@@ -52,8 +55,8 @@ class Emulator:
     def __init_hooks__(self):
         def hook_code(uc: Uc, address, size, user_data):
             print()
-            print(">>> Tracing instruction at 0x%x, instruction size = 0x%x" %
-                  (address, size))
+            cprint(">>> Tracing instruction at 0x{:x}, instruction size = 0x{:x}".format(
+                address, size), 'green')
             print("Registers: r0 - {}, r1 - {}, r2 - {}, r3 - {}, r4 - {}, r5 - {}, r6 - {}, r7 - {}, r8 - {} sb - {}, pc - {}, lr - {}, sp - {}".format(
                 hex(uc.reg_read(UC_ARM_REG_R0)),
                 hex(uc.reg_read(UC_ARM_REG_R1)),
@@ -109,13 +112,11 @@ class Emulator:
                 return False
 
         def hook_mem(uc, access, address, size, value, user_data):
-            self._mem_view.add_memory(
-                address, size,
-                access == UC_MEM_READ,
-                uc.reg_read(UC_ARM_REG_PC),
-                value if access == UC_MEM_WRITE else int.from_bytes(
-                    uc.mem_read(address, size), byteorder='little')
-            )
+            self._mem_view.access_memory(address, size, MemoryAccess.READ if access == UC_MEM_READ else MemoryAccess.WRITE,
+                                         uc.reg_read(UC_ARM_REG_PC),
+                                         value if access == UC_MEM_WRITE else int.from_bytes(
+                                             uc.mem_read(address, size), byteorder='little')
+                                         )
 
         def hook_fetch(uc, access, address, size, value, user_data):
             print("UC_MEM_FETCH of 0x%x, data size = %u" %
@@ -169,16 +170,19 @@ class Emulator:
         self.base_address = base_address
 
         self.mu.mem_map(base_address, 4000 * 1024 * 1024)
+        self._mem_view.map_memory(base_address, 4000 * 1024 * 1024)
+
         self.__init_hooks__()
 
     def init_data(self, pointer: int, data: bytes):
         self.mu.mem_write(self.base_address + pointer, data)
+        self._mem_view.init_memory(pointer, len(
+            data), MemoryType.TEXT_MEMORY, data)
 
     def init_data_file(self, filename: str, start: int, size: int, address=None):
         address = address if address is not None else start
-        self.mu.mem_write(self.base_address + address,
-                          open(filename, 'br').read()
-                          [start: start + size])
+        self.init_data(address, open(filename, 'br').read()
+                       [start: start + size])
 
     def init_reg(self, reg_type: int, reg_value):
         self.mu.reg_write(reg_type, reg_value)
@@ -194,12 +198,17 @@ class Emulator:
             else:
                 pass
 
-    def prepare_stack(self, stack_address: int, stack_data: bytes):
+    def prepare_stack(self, stack_address: int, stack_data: bytes, stack_size: int = 0x100):
         self.stack_address = stack_address
+
         self.mu.mem_write(self.base_address + stack_address, stack_data)
+
         # Fill empty stack
         self.mu.mem_write(self.base_address +
-                          stack_address - 0x100, b'\xff' * 0x100)
+                          stack_address - stack_size, b'\xff' * stack_size)
+
+        self._mem_view.init_memory(self.base_address + stack_address - stack_size,
+                                   stack_size, MemoryType.STACK_MEMORY, b'\xff' * stack_size)
 
         self.mu.reg_write(UC_ARM_REG_SP, stack_address)
 
