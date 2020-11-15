@@ -8,6 +8,7 @@ from termcolor import colored, cprint
 
 from .memory_viewer import MemoryViewer, MemoryType, MemoryAccess
 from .call_viewer import CallViewer
+from .exported import ExportedManager
 
 
 class EmulatorConfig:
@@ -89,9 +90,10 @@ class Emulator:
 
                 print("Arm mode: {}".format("THUMB2" if self.arm_mode ==
                                             True else "ARM"))
-                for i in disasm_thumb if self.arm_mode == 1 else disasm_arm:
-                    print("0x%x:\t%s\t%s" % (i.address, i.mnemonic, i.op_str))
-                    self._call_view.add_call(i.op_str, i.address, i)
+                for instruction in disasm_thumb if self.arm_mode == 1 else disasm_arm:
+                    print("0x%x:\t%s\t%s" % (instruction.address, instruction.mnemonic, instruction.op_str))
+                    
+                    self._call_view.add_call(instruction)
 
             else:
                 for i in self.md.disasm(uc.mem_read(address, size), address):
@@ -102,9 +104,7 @@ class Emulator:
 
         def hook_intr(uc, intno, user_data):
             if intno != 0x80:
-                print("got interrupt %x ???" % intno)
-                # uc.emu_stop()
-                # return
+                print("got interrupt {:8x}".format(intno))
 
         def hook_mem_invalid(uc, access, address, size, value, user_data):
             if access == UC_MEM_WRITE_UNMAPPED:
@@ -155,14 +155,15 @@ class Emulator:
                  mode=UC_MODE_THUMB,
                  arch_md=CS_ARCH_ARM,
                  mode_md=CS_MODE_THUMB,
-                 base_address=0x0000):
+                 base_address=0x0000,
+                 exp_manager=ExportedManager()):
 
         self.arch = arch
         self.mode = mode
 
         self.mu = Uc(arch, mode)
+        
         if arch_md == CS_ARCH_ARM:
-            # Special classes for disassm
             self.md_thumb = Cs(arch_md, CS_MODE_THUMB)
             self.md_arm = Cs(arch_md, CS_MODE_ARM)
 
@@ -177,9 +178,10 @@ class Emulator:
         else:
             self.arm_mode = False
 
+        self._export_manager = exp_manager
         self._mem_view = MemoryViewer()
         self._call_view = CallViewer()
-        self.hook_functions = {} 
+        self.hook_functions = {}
 
         self.config = config
         self.base_address = base_address
@@ -210,7 +212,7 @@ class Emulator:
     def init_reg(self, reg_type: int, reg_value):
         self.mu.reg_write(reg_type, reg_value)
 
-    def prepare_args(self, args: list):
+    def init_args(self, args: list):
         # TODO: add different regs
         regs = [UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3]
 
@@ -221,7 +223,7 @@ class Emulator:
             else:
                 pass
 
-    def prepare_stack(self,
+    def init_stack(self,
                       stack_address: int,
                       stack_size_top: int = 0x300,
                       stack_size_bottom: int = 0x300,
@@ -237,9 +239,8 @@ class Emulator:
         if stack_data is None:
             stack_data = b'\xff' * (stack_size_top + stack_size_bottom)
         if len(stack_data) < stack_size_top + stack_size_bottom:
-            stack_data.append(
-                b'\xff' *
-                (stack_size_top + stack_size_bottom - len(stack_data)))
+            stack_data = b'\xff' * stack_size_top + stack_data + b'\xff' * (
+                stack_size_bottom - len(stack_data))
 
         self.mu.mem_write(self.base_address + stack_address - stack_size_top,
                           stack_data)
@@ -249,9 +250,11 @@ class Emulator:
         self.mu.reg_write(UC_ARM_REG_SP, stack_address)
 
     def emulate(self, start: int, end: int, count: int):
-        assert start <= end
-
         self.__init_hooks__()
+        
+        for address, func in self._export_manager.iter():
+            self.add_function_hook(address, func.hook)
+
         self.mu.emu_start(self.base_address + start +
                           (0x01 if self.mode == UC_MODE_THUMB else 0x00),
                           end,
@@ -274,8 +277,8 @@ class Emulator:
                           end,
                           count=count)
 
-    def read_stack(self, size=0x300):
-        return self.read_memory(self.stack_address, size)
+    def read_stack(self, size=0x400, offset=0x200):
+        return self.read_memory(self.stack_address - offset, size)
 
     def read_memory(self, address: int, size=0x100):
         return self.mu.mem_read(self.base_address + address, size)

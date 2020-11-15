@@ -1,11 +1,8 @@
 from unicorn import *
 from capstone import *
+from capstone.arm import *
 
-def near(a1, a2):
-    if abs(a1 - a2) < 0x4:
-        return True
-    else:
-        return False
+from .utils import *
 
 class CallViewer:
     CALL_TYPE = 1
@@ -20,29 +17,34 @@ class CallViewer:
         self.prev_storage = None
    
     @staticmethod
-    def create_storage(address: int, pointer: int, instruction):
+    def create_storage(instruction):
+        """! Create temporary storage for data. """
         _type = CallViewer.CALL_TYPE if instruction.group(CS_GRP_CALL) else 0 
         _type |= CallViewer.JUMP_TYPE if instruction.group(CS_GRP_JUMP) else 0 
 
-        try:
-            address = int(address[3:], 16)
-        except Exception as _e:
-            address = -1
-
-        if _type != 0:
-            return [address, pointer, _type]
-        else:
+        if _type == 0:
             return None
 
-    def add_call(self, address: int, pointer: int, instruction):
+        if len(instruction.operands) != 0:
+            print("Problem")
+
+        pointer = instruction.address
+        address = get_call(instruction)
+
+        return [address, pointer, _type]
+
+    def add_call(self, instruction):
+        pointer = instruction.address
+        
         if self.prev_storage is not None:
             if self.prev_storage[0] == -1:
                 self.prev_storage[0] = pointer
                 self.call_map.append(self.prev_storage)
-            if near(self.prev_storage[0], pointer):
+            
+            if self.prev_storage[0] == pointer:
                 self.call_map.append(self.prev_storage)
 
-        self.prev_storage = CallViewer.create_storage(address, pointer, instruction)
+        self.prev_storage = CallViewer.create_storage(instruction)
 
 
     def print_tree(self):
