@@ -5,15 +5,22 @@ from unicorn.arm_const import *
 
 from colorama import init
 from termcolor import colored, cprint
+from typing import Callable
 
 from .memory_viewer import MemoryViewer, MemoryType, MemoryAccess
 from .call_viewer import CallViewer
 from .exported import ExportedManager
 
+Hook = Callable[[], None ]
+
 
 class EmulatorConfig:
-    def __init__(self, hook_code: bool, hook_inter: bool, hook_mem: bool,
-                 hook_mem_invalid: bool, hook_fetch):
+    def __init__(self,
+                 hook_code: Hook,
+                 hook_inter: Hook,
+                 hook_mem: Hook,
+                 hook_mem_invalid: Hook,
+                 hook_fetch: Hook):
         self._hook_code = hook_code
         self._hook_inter = hook_inter
         self._hook_mem = hook_mem
@@ -22,8 +29,11 @@ class EmulatorConfig:
 
     def __str__(self):
         return "Hooks configuaration: code - {}, interupt - {}, memory - {}, invalid memory - {}, fetch - {}".format(
-            self._hook_code, self._hook_inter, self._hook_mem,
-            self._hook_mem_invalid, self._hook_fetch)
+            self._hook_code,
+            self._hook_inter,
+            self._hook_mem,
+            self._hook_mem_invalid,
+            self._hook_fetch)
 
     @property
     def hook_code(self):
@@ -46,108 +56,135 @@ class EmulatorConfig:
         return self._hook_fetch
 
 
-VerboseEmulatorConfig = EmulatorConfig(True, True, True, True, True)
+def __hook_code__(uc, address, size, user_data, instruction):
 
-SilentEmulatorConfig = EmulatorConfig(False, False, False, False, False)
+    print()
+    cprint(">>> Tracing instruction at 0x{:x}, instruction size = 0x{:x}".format(address, size),
+           'green')
+    print(
+        "Registers: r0 - {}, r1 - {}, r2 - {}, r3 - {}, r4 - {}, r5 - {}, r6 - {}, r7 - {}, r8 - {} sb - {}, pc - {}, lr - {}, sp - {}"
+        .format(hex(uc.reg_read(UC_ARM_REG_R0)),
+                hex(uc.reg_read(UC_ARM_REG_R1)),
+                hex(uc.reg_read(UC_ARM_REG_R2)),
+                hex(uc.reg_read(UC_ARM_REG_R3)),
+                hex(uc.reg_read(UC_ARM_REG_R4)),
+                hex(uc.reg_read(UC_ARM_REG_R5)),
+                hex(uc.reg_read(UC_ARM_REG_R6)),
+                hex(uc.reg_read(UC_ARM_REG_R7)),
+                hex(uc.reg_read(UC_ARM_REG_R8)),
+                hex(uc.reg_read(UC_ARM_REG_SB)),
+                hex(uc.reg_read(UC_ARM_REG_PC)),
+                hex(uc.reg_read(UC_ARM_REG_LR)),
+                hex(uc.reg_read(UC_ARM_REG_SP))))
+
+    print("0x%x:\t%s\t%s" % (instruction.address, instruction.mnemonic, instruction.op_str))
+
+
+def __hook_intr__(uc, intno, user_data):
+    if intno != 0x80:
+        print("got interrupt {:8x}".format(intno))
+
+
+def __hook_mem_invalid__(uc, access, address, size, value, user_data):
+    if access == UC_MEM_WRITE_UNMAPPED:
+        print(">>> Missing memory is being WRITE at 0x%x, data size = %u, data value = 0x%x" %
+              (address, size, value))
+        return False
+    else:
+        print(">>> Missing memory is being READ at 0x%x, data size = %u, data value = 0x%x" %
+              (address, size, value))
+        return False
+
+
+def __hook_mem__(uc, access, address, size, value, user_data):
+    print("Hook memory")
+
+
+def __hook_fetch__(uc, access, address, size, value, user_data):
+    print("UC_MEM_FETCH of 0x%x, data size = %u" % (address, size))
+
+
+def __silent_hook__(uc):
+    pass
+
+
+VerboseEmulatorConfig = EmulatorConfig(__hook_code__,
+                                       __hook_intr__,
+                                       __hook_mem__,
+                                       __hook_mem_invalid__,
+                                       __hook_fetch__)
+SilentEmulatorConfig = EmulatorConfig(__silent_hook__,
+                                      __silent_hook__,
+                                      __silent_hook__,
+                                      __silent_hook__,
+                                      __silent_hook__)
 
 
 class Emulator:
     def __init_hooks__(self):
-        def hook_code(uc: Uc, address, size, user_data):
-            print()
-            cprint(
-                ">>> Tracing instruction at 0x{:x}, instruction size = 0x{:x}".
-                format(address, size), 'green')
-            print(
-                "Registers: r0 - {}, r1 - {}, r2 - {}, r3 - {}, r4 - {}, r5 - {}, r6 - {}, r7 - {}, r8 - {} sb - {}, pc - {}, lr - {}, sp - {}"
-                .format(hex(uc.reg_read(UC_ARM_REG_R0)),
-                        hex(uc.reg_read(UC_ARM_REG_R1)),
-                        hex(uc.reg_read(UC_ARM_REG_R2)),
-                        hex(uc.reg_read(UC_ARM_REG_R3)),
-                        hex(uc.reg_read(UC_ARM_REG_R4)),
-                        hex(uc.reg_read(UC_ARM_REG_R5)),
-                        hex(uc.reg_read(UC_ARM_REG_R6)),
-                        hex(uc.reg_read(UC_ARM_REG_R7)),
-                        hex(uc.reg_read(UC_ARM_REG_R8)),
-                        hex(uc.reg_read(UC_ARM_REG_SB)),
-                        hex(uc.reg_read(UC_ARM_REG_PC)),
-                        hex(uc.reg_read(UC_ARM_REG_LR)),
-                        hex(uc.reg_read(UC_ARM_REG_SP))))
+        def mem_decorator(func):
+            def mem_wrap(uc, access, address, size, value, user_data):
+                self._mem_view.access_memory(
+                    address,
+                    size,
+                    MemoryAccess.READ if access == UC_MEM_READ else MemoryAccess.WRITE,
+                    uc.reg_read(UC_ARM_REG_PC),
+                    value if access == UC_MEM_WRITE else int.from_bytes(
+                        uc.mem_read(address, size), byteorder='little'))
 
-            if self.arch == UC_ARCH_ARM:
-                disasm_thumb = list(
-                    self.md_thumb.disasm(uc.mem_read(address, size), address))
-                disasm_arm = list(
-                    self.md_arm.disasm(uc.mem_read(address, size), address))
+                return func(uc, access, address, size, value, user_data)
 
-                if len(disasm_thumb) == 2 and len(
-                        disasm_arm) == 1 and self.arm_mode == True:
-                    self.arm_mode = False
+            return mem_wrap
 
-                if len(disasm_thumb) == 1 and len(
-                        disasm_arm) != 1 and self.arm_mode == False:
-                    self.arm_mode = True
+        def code_decorator(func):
+            def code_wrap(uc, address, size, user_data):
+                # TODO: fix this trash
+                if address in self.hook_functions_before:
+                    self.hook_functions_before[address](uc)
+                
+                if uc._arch == UC_ARCH_ARM:
+                    if uc._mode == UC_MODE_THUMB:
+                        disasm = list(self.md_thumb.disasm(uc.mem_read(address, size), address))
+                        if len(disasm) != 1:
+                            disasm = list(self.md_arm.disasm(uc.mem_read(address, size), address))
+                    elif uc._mode == UC_MODE_ARM:
+                        disasm = list(self.md_arm.disasm(uc.mem_read(address, size), address))
+                        if len(disasm) != 1:
+                            disasm = list(
+                                self.md_thumb.disasm(uc.mem_read(address, size), address))
+                else:
+                    disasm = list(self.md.disasm(uc.mem_read(address, size), address))
+                self._call_view.add_call(disasm[0])
 
-                print("Arm mode: {}".format("THUMB2" if self.arm_mode ==
-                                            True else "ARM"))
-                for instruction in disasm_thumb if self.arm_mode == 1 else disasm_arm:
-                    print("0x%x:\t%s\t%s" % (instruction.address, instruction.mnemonic, instruction.op_str))
-                    
-                    self._call_view.add_call(instruction)
+                func(uc, address, size, user_data, disasm[0])
+                
+                if address in self.hook_functions_after:
+                    self.hook_functions_after[address](uc)
 
-            else:
-                for i in self.md.disasm(uc.mem_read(address, size), address):
-                    print("0x%x:\t%s\t%s" % (i.address, i.mnemonic, i.op_str))
+                return
+            return code_wrap
 
-            if address in self.hook_functions:
-                self.hook_functions[address](uc)
-
-        def hook_intr(uc, intno, user_data):
-            if intno != 0x80:
-                print("got interrupt {:8x}".format(intno))
-
-        def hook_mem_invalid(uc, access, address, size, value, user_data):
-            if access == UC_MEM_WRITE_UNMAPPED:
-                print(
-                    ">>> Missing memory is being WRITE at 0x%x, data size = %u, data value = 0x%x"
-                    % (address, size, value))
-                return False
-            else:
-                print(
-                    ">>> Missing memory is being READ at 0x%x, data size = %u, data value = 0x%x"
-                    % (address, size, value))
-                return False
-
+        @mem_decorator
         def hook_mem(uc, access, address, size, value, user_data):
-            self._mem_view.access_memory(
-                address, size, MemoryAccess.READ
-                if access == UC_MEM_READ else MemoryAccess.WRITE,
-                uc.reg_read(UC_ARM_REG_PC),
-                value if access == UC_MEM_WRITE else int.from_bytes(
-                    uc.mem_read(address, size), byteorder='little'))
+            return self.config.hook_mem(uc, access, address, size, value, user_data)
 
-        def hook_fetch(uc, access, address, size, value, user_data):
-            print("UC_MEM_FETCH of 0x%x, data size = %u" % (address, size))
+        @code_decorator
+        def hook_code(uc, address, size, user_data, instruction):
+            return self.config.hook_code(uc, address, size, user_data, instruction)
 
-        if self.config.hook_code == True:
-            self.mu.hook_add(UC_HOOK_CODE, hook_code)
+        for address, func in self._export_manager.iter():
+            self.add_function_hook(address, func.hook)
 
-        if self.config.hook_inter == True:
-            self.mu.hook_add(UC_HOOK_INTR, hook_intr)
-
-        if self.config.hook_mem == True:
-            self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, hook_mem)
-
-        if self.config.hook_mem_invalid == True:
-            self.mu.hook_add(
-                UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED,
-                hook_mem_invalid)
-
-        if self.config.hook_fetch == True:
-            self.mu.hook_add(
-                UC_HOOK_MEM_FETCH | UC_HOOK_MEM_FETCH_INVALID
-                | UC_HOOK_MEM_FETCH_UNMAPPED | UC_HOOK_MEM_FETCH_PROT
-                | UC_HOOK_MEM_PROT | UC_HOOK_MEM_PROT, hook_fetch)
+        self.mu.hook_add(UC_HOOK_CODE, hook_code)
+        self.mu.hook_add(UC_HOOK_INTR, self.config.hook_inter)
+        self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, hook_mem)
+        self.mu.hook_add(UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED,
+                         self.config.hook_mem_invalid)
+        self.mu.hook_add(
+            UC_HOOK_MEM_FETCH | UC_HOOK_MEM_FETCH_INVALID
+            | UC_HOOK_MEM_FETCH_UNMAPPED | UC_HOOK_MEM_FETCH_PROT
+            | UC_HOOK_MEM_PROT | UC_HOOK_MEM_PROT,
+            self.config.hook_fetch)
 
     def __init__(self,
                  config: EmulatorConfig = VerboseEmulatorConfig,
@@ -162,7 +199,7 @@ class Emulator:
         self.mode = mode
 
         self.mu = Uc(arch, mode)
-        
+
         if arch_md == CS_ARCH_ARM:
             self.md_thumb = Cs(arch_md, CS_MODE_THUMB)
             self.md_arm = Cs(arch_md, CS_MODE_ARM)
@@ -181,7 +218,10 @@ class Emulator:
         self._export_manager = exp_manager
         self._mem_view = MemoryViewer()
         self._call_view = CallViewer()
-        self.hook_functions = {}
+        
+        self.hook_functions_before = {}
+        self.hook_functions_after = {}
+
 
         self.config = config
         self.base_address = base_address
@@ -194,17 +234,11 @@ class Emulator:
 
     def init_data(self, pointer: int, data: bytes):
         self.mu.mem_write(self.base_address + pointer, data)
-        self._mem_view.init_memory(pointer, len(data), MemoryType.TEXT_MEMORY,
-                                   data)
+        self._mem_view.init_memory(pointer, len(data), MemoryType.TEXT_MEMORY, data)
 
-    def init_data_file(self,
-                       filename: str,
-                       start: int,
-                       size: int,
-                       address=None):
+    def init_data_file(self, filename: str, start: int, size: int, address=None):
         address = address if address is not None else start
-        self.init_data(address,
-                       open(filename, 'br').read()[start:start + size])
+        self.init_data(address, open(filename, 'br').read()[start:start + size])
 
     def init_binary(self, filename: str):
         self.init_data(0, open(filename, 'br').read())
@@ -224,10 +258,10 @@ class Emulator:
                 pass
 
     def init_stack(self,
-                      stack_address: int,
-                      stack_size_top: int = 0x300,
-                      stack_size_bottom: int = 0x300,
-                      stack_data: bytes = None):
+                   stack_address: int,
+                   stack_size_top: int = 0x300,
+                   stack_size_bottom: int = 0x300,
+                   stack_data: bytes = None):
         """! Prepare stack of emulator. As it emulate function stack has to have free memory at top and bottom.
 
         @param stack_address        adrress of current stack
@@ -239,25 +273,23 @@ class Emulator:
         if stack_data is None:
             stack_data = b'\xff' * (stack_size_top + stack_size_bottom)
         if len(stack_data) < stack_size_top + stack_size_bottom:
-            stack_data = b'\xff' * stack_size_top + stack_data + b'\xff' * (
-                stack_size_bottom - len(stack_data))
+            stack_data = b'\xff' * stack_size_top + stack_data + b'\xff' * (stack_size_bottom -
+                                                                            len(stack_data))
 
-        self.mu.mem_write(self.base_address + stack_address - stack_size_top,
-                          stack_data)
-        self._mem_view.init_memory(
-            self.base_address + stack_address - stack_size_top,
-            len(stack_data), MemoryType.STACK_MEMORY, stack_data)
+        self.mu.mem_write(self.base_address + stack_address - stack_size_top, stack_data)
+        self._mem_view.init_memory(self.base_address + stack_address - stack_size_top,
+                                   len(stack_data),
+                                   MemoryType.STACK_MEMORY,
+                                   stack_data)
         self.mu.reg_write(UC_ARM_REG_SP, stack_address)
 
-    def emulate(self, start: int, end: int, count: int):
+    def emulate(self, begin: int, until: int, count: int = 0):
+        """! Start emulation. """
         self.__init_hooks__()
-        
-        for address, func in self._export_manager.iter():
-            self.add_function_hook(address, func.hook)
 
-        self.mu.emu_start(self.base_address + start +
+        self.mu.emu_start(begin=self.base_address + begin +
                           (0x01 if self.mode == UC_MODE_THUMB else 0x00),
-                          end,
+                          until=until,
                           count=count)
 
     def create_binary(self, start: int, end: int, count: int, file: str):
@@ -277,19 +309,35 @@ class Emulator:
                           end,
                           count=count)
 
-    def read_stack(self, size=0x400, offset=0x200):
-        return self.read_memory(self.stack_address - offset, size)
-
-    def read_memory(self, address: int, size=0x100):
-        return self.mu.mem_read(self.base_address + address, size)
-
-    def add_function_hook(self, address: int, func):
+    def add_function_hook(self, address: int, func, place="before"):
         """! Add function hook by address.
         
         @param address      address of fucntion
         @param func         function that will emulate function using unicorn
+        @param place        place of hook: hook intruction "before" @hook_code or "after" 
         """
-        self.hook_functions[address] = func
+        if place == "before":
+            self.hook_functions_before[address] = func
+        elif place == "after":
+            self.hook_functions_after[address] = func
+        else:
+            print("Failed to add hook")
+
+    def read_stack(self, size=0x400, offset=0x200):
+        """! Read data in stack.
+        
+        @param size         size of stack
+        @param offset       offset of stack to read
+        """
+        return self.read_memory(self.stack_address - offset, size)
+
+    def read_memory(self, address: int, size=0x100):
+        """! Read data at address.
+        
+        @address            address of memory
+        @size               size of memory to readd
+        """
+        return self.mu.mem_read(self.base_address + address, size)
 
     @property
     def mem_view(self):
