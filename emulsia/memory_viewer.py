@@ -2,6 +2,7 @@ from unicorn import *
 from enum import Enum
 from termcolor import colored, cprint
 
+from .utils import dict_add
 
 class MemoryType(Enum):
     STACK_MEMORY = 0
@@ -13,6 +14,8 @@ class MemoryType(Enum):
     UNMAPPED_MEMORY = 4
     UNDEFINED_MEMORY = 5
 
+    UNINITIALIZED_STACK_MEMORY = 6
+
 
 class MemoryAccess(Enum):
     READ = 0
@@ -22,12 +25,25 @@ class MemoryAccess(Enum):
 class MemoryViewer:
     def __init__(self):
 
+        # Dict with memory that were accessed
         self.memory_access_map = {}
-        self.memory_map = {}
+        # Dict with memory that were accessed but invalid 
         self.invalid_access = {}
+        # Dict with all memory that were initialized 
+        self.memory_map = {}
 
         self.start_addr = 0
         self.end_addr = 0
+
+        self.stack_address = -1
+
+    @property
+    def stack(self):
+        return self.stack_address
+
+    @stack.setter
+    def stack(self, address: int):
+        self.stack_address = self
 
     def map_memory(self, start_address: int, size: int):
         """! Map memory(just define memory space suitable for binary file).
@@ -38,8 +54,7 @@ class MemoryViewer:
         self.start_addr = start_address
         self.end_addr = start_address + size
 
-    def init_memory(self, address: int, size: int, init_type: MemoryType,
-                    value: bytearray):
+    def init_memory(self, address: int, size: int, init_type: MemoryType, value: bytearray):
         """! Initialized a part of memory.
         
         @param address          address of memory
@@ -49,8 +64,7 @@ class MemoryViewer:
         """
 
         for size_iter in range(0, size):
-            self.memory_map[address + size_iter] = (value[size_iter],
-                                                    init_type)
+            self.memory_map[address + size_iter] = (value[size_iter], init_type)
 
     def check_memory(self, address: int, size: int) -> list:
         """! Check memory in map if it was initialized.
@@ -58,21 +72,45 @@ class MemoryViewer:
         @param address          address of memory
         @param size             size of memory
 
-        @return list            list of MemoryTypes. Use list for situation when we try to access to different types of memoty
+        @return list            list of MemoryTypes. Use list for situation when we try to access to different types of memory
         """
         type_list = []
         for size_iter in range(0, size):
             mem_addr = address + size_iter
-            type_list.append(
-                self.memory_map.get(
-                    mem_addr, MemoryType.UNDEFINED_MEMORY
-                    if self.start_addr <= mem_addr <= self.end_addr else
-                    MemoryType.UNMAPPED_MEMORY))
+            # Check if this memory is in memory_map
+            enter = self.memory_map.get(mem_addr, None)
+            if enter is not None:
+                type_list.append(enter)
+            else:
+                # Check if this memory in stack
+                if self.stack_address != -1 and mem_addr < self.stack_address:
+                    type_list.append(MemoryType.UNINITIALIZED_STACK_MEMORY)
+                # Otherwise it's invalid map
+                else:
+                    type_list.append(MemoryType.UNDEFINED_MEMORY if self.start_addr <= mem_addr <=
+                                     self.end_addr else MemoryType.UNMAPPED_MEMORY)
 
         return type_list
 
-    def access_memory(self, address: int, size: int, access_type: MemoryAccess,
-                      pointer: int, value):
+    def memory_type(self, address: int):
+        if self.stack_address != -1 and address < self.stack_address:
+            return MemoryType.STACK_MEMORY
+        
+        # TODO: add heap
+        if self.start_addr > address > self.end_addr:
+            return MemoryType.UNMAPPED_MEMORY
+
+        if address in self.memory_map:
+            return self.memory_map[address][1]
+        
+        return MemoryType.UNDEFINED_MEMORY
+
+    def access_memory(self,
+                      address: int,
+                      size: int,
+                      access_type: MemoryAccess,
+                      pointer: int,
+                      value):
         """! Add access to memory.
 
         @param address      address of memory
@@ -81,27 +119,24 @@ class MemoryViewer:
         @param pointer      address from where access to memory
         @param value        value on address
         """
-        types = self.check_memory(address, size)
-        for i in range(0, len(types)):
-            type_ = types[i]
-            if type_ == MemoryType.UNDEFINED_MEMORY or type_ == MemoryType.UNMAPPED_MEMORY:
-                cprint(
-                    "Trying access to INVALID memory {:08x}".format(address +
-                                                                    i), "red")
+        # Should check if emulator tries to access(read!!) in invalid memory.
+        # If it's trying to write in invalid memory all will be fine because @hook_invalid_mem will be raised.
+        if access_type == MemoryAccess.READ:
+            types = self.check_memory(address, size)
 
-                if address not in self.invalid_access:
-                    self.invalid_access[address] = [(size, pointer,
-                                                     access_type, value)]
-                else:
-                    self.invalid_access[address].append(
-                        (size, pointer, access_type, value))
+            for i in range(0, len(types)):
+                type_ = types[i]
 
-        values = self.memory_access_map.get(address, None)
-        if values is not None:
-            values.append((size, pointer, access_type, value))
-        else:
-            self.memory_access_map[address] = [(size, pointer, access_type,
-                                                value)]
+            if type_ == MemoryType.UNDEFINED_MEMORY or type_ == MemoryType.UNMAPPED_MEMORY or type_ == MemoryType.UNINITIALIZED_STACK_MEMORY:
+                cprint("Trying access to INVALID memory {:08x}".format(address + i), "red")
+                dict_add(self.invalid_access, address, (size, pointer, access_type, value, type_))
+
+        dict_add(self.memory_access_map, address, (size, pointer, access_type, value))
+        
+        data = int.to_bytes(value, size, byteorder="little")
+        if access_type == MemoryAccess.WRITE:
+            for size_iter in range(0, size):
+                self.memory_map[address + size_iter] = (data[size_iter], self.memory_type(address + size_iter))
 
     def print_access(self):
         """! Print inforamtion about all access tries."""
@@ -112,8 +147,11 @@ class MemoryViewer:
         for address, info_list in sorted(self.memory_access_map.items()):
             for info in info_list:
                 print("{:08x} | {:02x}   | {:08x} | {}      | {:08x}".format(
-                    address, info[0], info[1],
-                    "R" if info[2] == MemoryAccess.READ else "W", info[3]))
+                    address,
+                    info[0],
+                    info[1],
+                    "R" if info[2] == MemoryAccess.READ else "W",
+                    info[3]))
 
     def print_invlaid_memory(self):
         """! Print access tries to invalid memory."""
@@ -124,5 +162,8 @@ class MemoryViewer:
         for address, info_list in sorted(self.invalid_access.items()):
             for info in info_list:
                 print("{:08x} | {:02x}   | {:08x} | {}      | {:08x}".format(
-                    address, info[0], info[1],
-                    "R" if info[2] == MemoryAccess.READ else "W", info[3]))
+                    address,
+                    info[0],
+                    info[1],
+                    "R" if info[2] == MemoryAccess.READ else "W",
+                    info[3]))

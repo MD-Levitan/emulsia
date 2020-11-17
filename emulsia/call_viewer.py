@@ -25,7 +25,7 @@ class CallViewer:
         if _type == 0:
             return None
 
-        if len(instruction.operands) != 0:
+        if len(instruction.operands) != 1:
             print("Problem")
 
         pointer = instruction.address

@@ -97,14 +97,14 @@ def __hook_mem_invalid__(uc, access, address, size, value, user_data):
 
 
 def __hook_mem__(uc, access, address, size, value, user_data):
-    print("Hook memory")
+    pass
 
 
 def __hook_fetch__(uc, access, address, size, value, user_data):
     print("UC_MEM_FETCH of 0x%x, data size = %u" % (address, size))
 
 
-def __silent_hook__(uc):
+def __silent_hook__(uc, *args):
     pass
 
 
@@ -175,6 +175,9 @@ class Emulator:
         for address, func in self._export_manager.iter():
             self.add_function_hook(address, func.hook)
 
+        print(self.hook_functions_before)
+        print(self.hook_functions_after)
+
         self.mu.hook_add(UC_HOOK_CODE, hook_code)
         self.mu.hook_add(UC_HOOK_INTR, self.config.hook_inter)
         self.mu.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, hook_mem)
@@ -226,7 +229,7 @@ class Emulator:
         self.config = config
         self.base_address = base_address
 
-        self.mem_range = 4000 * 1024 * 1024
+        self.mem_range = 8000 * 1024 * 1024
         self.bin_range = 4000 * 1024
 
         self.mu.mem_map(base_address, self.mem_range)
@@ -276,6 +279,7 @@ class Emulator:
             stack_data = b'\xff' * stack_size_top + stack_data + b'\xff' * (stack_size_bottom -
                                                                             len(stack_data))
 
+        print(stack_data)
         self.mu.mem_write(self.base_address + stack_address - stack_size_top, stack_data)
         self._mem_view.init_memory(self.base_address + stack_address - stack_size_top,
                                    len(stack_data),

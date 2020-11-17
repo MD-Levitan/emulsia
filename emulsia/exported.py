@@ -11,7 +11,7 @@ class ExportedFunction:
         self._attr = attr
 
     def __str__(self):
-        return "libc function: {}".format(self._name)
+        return "libc function: {}, function {}".format(self._name, self._hook)
 
     @property
     def hook(self):
@@ -85,7 +85,7 @@ class ExportedManager:
         self.exported_map = dict()
 
     def export(self, address: int, export: ExportedFunction):
-        self.exported_map[address] = ExportedFunction
+        self.exported_map[address] = export
 
     def iter(self):
         for address, func in self.exported_map.items():

@@ -23,4 +23,10 @@ def get_call(instruction):
     
     if operand.type in (ARM_OP_IMM, ARM_OP_PIMM, ARM_OP_CIMM):
         return operand.imm
-    return -1
+    return - 1
+    
+def dict_add(map_: dict, key, values):
+    if key not in map_:
+        map_[key] = [values]
+    else:
+        map_[key].append(values)
