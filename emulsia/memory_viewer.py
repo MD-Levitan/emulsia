@@ -4,6 +4,7 @@ from termcolor import colored, cprint
 
 from .utils import dict_add
 
+
 class MemoryType(Enum):
     STACK_MEMORY = 0
     HEAP_MEMORY = 1
@@ -20,6 +21,15 @@ class MemoryType(Enum):
 class MemoryAccess(Enum):
     READ = 0
     WRITE = 1
+    READ_WRITE = 2
+
+    @staticmethod
+    def from_str(str):
+        if str == "r":
+            return MemoryAccess.READ
+        if str == "w":
+            return MemoryAccess.WRITE
+        return MemoryAccess.READ_WRITE
 
 
 class MemoryViewer:
@@ -27,9 +37,9 @@ class MemoryViewer:
 
         # Dict with memory that were accessed
         self.memory_access_map = {}
-        # Dict with memory that were accessed but invalid 
+        # Dict with memory that were accessed but invalid
         self.invalid_access = {}
-        # Dict with all memory that were initialized 
+        # Dict with all memory that were initialized
         self.memory_map = {}
 
         self.start_addr = 0
@@ -95,14 +105,14 @@ class MemoryViewer:
     def memory_type(self, address: int):
         if self.stack_address != -1 and address < self.stack_address:
             return MemoryType.STACK_MEMORY
-        
+
         # TODO: add heap
         if self.start_addr > address > self.end_addr:
             return MemoryType.UNMAPPED_MEMORY
 
         if address in self.memory_map:
             return self.memory_map[address][1]
-        
+
         return MemoryType.UNDEFINED_MEMORY
 
     def access_memory(self,
@@ -132,20 +142,24 @@ class MemoryViewer:
                 dict_add(self.invalid_access, address, (size, pointer, access_type, value, type_))
 
         dict_add(self.memory_access_map, address, (size, pointer, access_type, value))
-        
+
         data = int.to_bytes(value, size, byteorder="little")
         if access_type == MemoryAccess.WRITE:
             for size_iter in range(0, size):
-                self.memory_map[address + size_iter] = (data[size_iter], self.memory_type(address + size_iter))
+                self.memory_map[address + size_iter] = (data[size_iter],
+                                                        self.memory_type(address + size_iter))
 
-    def print_access(self):
+    def print_access(self, type_: str = "rw"):
         """! Print inforamtion about all access tries."""
         print()
         print("===              Access Map              ===")
         print("Address:   Size:  Pointer:   Access: Value:")
 
+        type_ = MemoryAccess.from_str(type_)
         for address, info_list in sorted(self.memory_access_map.items()):
             for info in info_list:
+                if type_ != MemoryAccess.READ_WRITE and type_ != info[2]:
+                    continue
                 print("{:08x} | {:02x}   | {:08x} | {}      | {:08x}".format(
                     address,
                     info[0],
@@ -153,14 +167,17 @@ class MemoryViewer:
                     "R" if info[2] == MemoryAccess.READ else "W",
                     info[3]))
 
-    def print_invlaid_memory(self):
+    def print_invlaid_memory(self, type_: str = "rw"):
         """! Print access tries to invalid memory."""
         print()
         print("===            Invalid Memory            ===")
         print("Address:   Size:  Pointer:   Access: Value:")
 
+        type_ = MemoryAccess.from_str(type_)
         for address, info_list in sorted(self.invalid_access.items()):
             for info in info_list:
+                if type_ != MemoryAccess.READ_WRITE and type_ != info[2]:
+                    continue
                 print("{:08x} | {:02x}   | {:08x} | {}      | {:08x}".format(
                     address,
                     info[0],

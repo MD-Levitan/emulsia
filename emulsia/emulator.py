@@ -279,7 +279,6 @@ class Emulator:
             stack_data = b'\xff' * stack_size_top + stack_data + b'\xff' * (stack_size_bottom -
                                                                             len(stack_data))
 
-        print(stack_data)
         self.mu.mem_write(self.base_address + stack_address - stack_size_top, stack_data)
         self._mem_view.init_memory(self.base_address + stack_address - stack_size_top,
                                    len(stack_data),

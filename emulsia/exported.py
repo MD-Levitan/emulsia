@@ -23,7 +23,7 @@ def __memset__(uc: Uc):
     value = uc.reg_read(UC_ARM_REG_R1)
     size = uc.reg_read(UC_ARM_REG_R2)
 
-    uc.mem_write(uc.reg_read(UC_ARM_REG_R0), bytearray([value]) * size)
+    uc.mem_write(uc.reg_read(UC_ARM_REG_R0), bytes([value] * size))
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
