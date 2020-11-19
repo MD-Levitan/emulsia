@@ -152,7 +152,7 @@ class MemoryViewer:
     def print_access(self, type_: str = "rw"):
         """! Print inforamtion about all access tries."""
         print()
-        print("===              Access Map              ===")
+        print("===              Access Memory Map              ===")
         print("Address:   Size:  Pointer:   Access: Value:")
 
         type_ = MemoryAccess.from_str(type_)
@@ -170,7 +170,7 @@ class MemoryViewer:
     def print_invlaid_memory(self, type_: str = "rw"):
         """! Print access tries to invalid memory."""
         print()
-        print("===            Invalid Memory            ===")
+        print("===            Invalid Memory Map           ===")
         print("Address:   Size:  Pointer:   Access: Value:")
 
         type_ = MemoryAccess.from_str(type_)

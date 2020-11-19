@@ -1,0 +1,12 @@
+Main:
+- Add logging
+- Add support output to file
+- Add docs and update doxygen
+- Add work with bss and heap
+- Add colorful and usuall print
+- Load from pointer + save/store all values(stack, call, mem)
+- Add smth like breakpoint
+- Add Signals(?)
+
+call_viewer:
+-  
