@@ -1,7 +1,8 @@
 from unicorn import *
 from unicorn.arm_const import *
-
 import struct
+
+from .emulator_hooker import EmulatorHooker
 
 
 class ExportedFunction:
@@ -18,7 +19,8 @@ class ExportedFunction:
         return self._hook
 
 
-def __memset__(uc: Uc):
+def __memset__(emhook: EmulatorHooker):
+    uc = emhook.uc
     print("memset hook")
     value = uc.reg_read(UC_ARM_REG_R1)
     size = uc.reg_read(UC_ARM_REG_R2)
@@ -27,23 +29,25 @@ def __memset__(uc: Uc):
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
-def __memclr__(uc: Uc):
+def __memclr__(emhook: EmulatorHooker):
     print("memclr hook")
+    uc = emhook.uc
     size = uc.reg_read(UC_ARM_REG_R1)
 
     uc.mem_write(uc.reg_read(UC_ARM_REG_R0), b"\x00" * size)
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
-def __free__(uc: Uc):
+def __free__(emhook: EmulatorHooker):
     print("free hook")
-
+    uc = emhook.uc
     #TODO: add clear from heap
 
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
-def __malloc__(uc: Uc):
+def __malloc__(emhook: EmulatorHooker):
+    uc = emhook.uc
     HEAP_ADRESS = 0xBBBBBBB0
     print("malloc hook(size - {}). Heap - {}".format(
         uc.reg_read(UC_ARM_REG_R0), HEAP_ADRESS))
@@ -54,9 +58,9 @@ def __malloc__(uc: Uc):
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
-def __strlen__(uc: Uc):
+def __strlen__(emhook: EmulatorHooker):
     print("strlen hook")
-
+    uc = emhook.uc
     i = 0
     while True:
         symb = uc.mem_read(uc.reg_read(UC_ARM_REG_R0) + i, 0x1)
