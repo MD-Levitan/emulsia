@@ -216,6 +216,8 @@ class Emulator:
                  arch=UC_ARCH_ARM,
                  mode=UC_MODE_THUMB,
                  base_address=0x0000,
+                 stack_start=0xD0000000,
+                 heap_start=0xB0000000,
                  exp_manager=ExportedManager()):
 
         self.arch = arch
@@ -242,10 +244,10 @@ class Emulator:
         else:
             self.arm_mode = False
 
-        self.emhook = EmulatorHooker(self.uc)
         self._export_manager = exp_manager
-        self._mem_view = MemoryViewer()
+        self._mem_view = MemoryViewer(stack_start, heap_start)
         self._call_view = CallViewer()
+        self.emhook = EmulatorHooker(self.uc, self._mem_view)        
 
         self.hook_functions_before = {}
         self.hook_functions_after = {}
@@ -387,8 +389,8 @@ class Emulator:
 
     def __init_hooks__(self):
         def emulator_decorator(func):
-            def emulator_wrap(uc, *args):
-                return func(self.emhook, args)
+            def emulator_wrap(uc, interupt, user_data):
+                return func(self.emhook, interupt, user_data)
             return emulator_wrap
 
         def mem_decorator(func):
@@ -401,7 +403,7 @@ class Emulator:
                     value if access == UC_MEM_WRITE else int.from_bytes(
                         uc.mem_read(address, size), byteorder='little'))
 
-                return func(self, access, address, size, value, user_data)
+                return func(self.emhook, access, address, size, value, user_data)
 
             return mem_wrap
 
@@ -409,7 +411,7 @@ class Emulator:
             def code_wrap(uc, address, size, user_data):
                 # TODO: fix this trash
                 if address in self.hook_functions_before:
-                    self.hook_functions_before[address](self)
+                    self.hook_functions_before[address](self.emhook)
 
                 if uc._arch == UC_ARCH_ARM:
                     if uc._mode == UC_MODE_THUMB:
@@ -425,10 +427,10 @@ class Emulator:
                     disasm = list(self.cs.disasm(uc.mem_read(address, size), address))
                 self._call_view.add_call(disasm[0])
 
-                func(self, address, size, user_data, disasm[0])
+                func(self.emhook, address, size, user_data, disasm[0])
 
                 if address in self.hook_functions_after:
-                    self.hook_functions_after[address](self)
+                    self.hook_functions_after[address](self.emhook)
 
                 return
 
@@ -444,7 +446,7 @@ class Emulator:
 
         @emulator_decorator
         def hook_inter(emhook, interupt, user_data):
-            return self.config.hook_code(emhook, interupt, user_data)
+            return self.config.hook_inter(emhook, interupt, user_data)
 
 
         for address, func in self._export_manager.iter():

@@ -16,6 +16,7 @@ class MemoryType(Enum):
     UNDEFINED_MEMORY = 5
 
     UNINITIALIZED_STACK_MEMORY = 6
+    UNINITIALIZED_HEAP_MEMORY = 7
 
 
 class MemoryAccess(Enum):
@@ -33,7 +34,7 @@ class MemoryAccess(Enum):
 
 
 class MemoryViewer:
-    def __init__(self):
+    def __init__(self, stack_start, heap_start):
 
         # Dict with memory that were accessed
         self.memory_access_map = {}
@@ -45,7 +46,19 @@ class MemoryViewer:
         self.start_addr = 0
         self.end_addr = 0
 
-        self.stack_address = -1
+        # Start address of stack and heap
+        self.stack_start = stack_start
+        self.heap_start = heap_start
+        
+        # Current address of stack and heap
+        self.stack_address = stack_start
+        self.heap_address = heap_start
+
+        # TODO: rewrite heap. free doesn;t work at all
+        # Dict of heap allocations
+        self.heap_dict = {}
+        # List with all allocations fro debug and rev
+        self.heap_allocations = list()
 
     @property
     def stack(self):
@@ -53,7 +66,40 @@ class MemoryViewer:
 
     @stack.setter
     def stack(self, address: int):
-        self.stack_address = self
+        self.stack_address = address
+
+    @property
+    def heap(self):
+        return self.heap
+
+    @heap.setter
+    def heap(self, address: int):
+        self.heap_address = address
+
+
+    def malloc(self, size: int):
+        address = self.heap_address
+        self.heap_dict[address] = size
+        self.heap_allocations.append({address: [size, "malloc"]}) 
+        self.heap_address += size
+        return address
+
+    def alloca(self, size: int):
+        """! Doesn't work yet . !"""
+        address = self.stack_address 
+        self.stack_address += size
+        return address
+
+
+    def free(self, address: int):
+        entry = self.heap_dict.get(address, None)
+        if entry is None:
+            print("Double free")
+            self.heap_allocations.append({address: [-1, "double freee"]}) 
+        else:
+            self.heap_dict[address] = None
+            self.heap_allocations.append({address: [-1, "free"]}) 
+        
 
     def map_memory(self, start_address: int, size: int):
         """! Map memory(just define memory space suitable for binary file).

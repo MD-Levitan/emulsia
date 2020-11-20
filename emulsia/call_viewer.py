@@ -129,3 +129,12 @@ class CallViewer:
             if storage.type != CallStorage.CALL_TYPE:
                 continue
             print("{:8x} {:8x} {:8x}".format(storage.address, storage.pointer, storage.level))
+
+    def print_call_tree_dev(self):
+        print()
+        print("===         Call Tree         ===")
+        print("Address:   Pointer: Level:")
+        for storage in self.call_map:
+            if storage.type != CallStorage.CALL_TYPE:
+                continue
+            print("{:s}{:8x} {:8x} {:8x}".format("\t" * storage.level, storage.address, storage.pointer, storage.level))

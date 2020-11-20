@@ -48,13 +48,14 @@ def __free__(emhook: EmulatorHooker):
 
 def __malloc__(emhook: EmulatorHooker):
     uc = emhook.uc
-    HEAP_ADRESS = 0xBBBBBBB0
-    print("malloc hook(size - {}). Heap - {}".format(
-        uc.reg_read(UC_ARM_REG_R0), HEAP_ADRESS))
-    size = uc.reg_read(UC_ARM_REG_R0)
+    mem = emhook.mem
 
-    uc.reg_write(UC_ARM_REG_R0, HEAP_ADRESS)
-    HEAP_ADRESS += size
+    size = uc.reg_read(UC_ARM_REG_R0)
+    address = mem.malloc(size=size)
+
+    print("HOOK malloc({:8x}) -> {:8x}".format(size, address))
+    
+    uc.reg_write(UC_ARM_REG_R0, address)
     uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
 
 
