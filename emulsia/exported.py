@@ -1,9 +1,7 @@
 from unicorn import *
-from unicorn.arm_const import *
-import struct
 
-from .emulator_hooker import EmulatorHooker
-
+from emulsia.emulator_hooker import EmulatorHooker
+from emulsia.utils import logger, get_general_regs, get_special_regs
 
 class ExportedFunction:
     def __init__(self, name: str, hook, attr=None):
@@ -12,7 +10,7 @@ class ExportedFunction:
         self._attr = attr
 
     def __str__(self):
-        return "libc function: {}, function {}".format(self._name, self._hook)
+        return "function name: {}, function {}".format(self._name, self._hook)
 
     @property
     def hook(self):
@@ -21,12 +19,17 @@ class ExportedFunction:
 
 def __memset__(emhook: EmulatorHooker):
     uc = emhook.uc
-    print("memset hook")
-    value = uc.reg_read(UC_ARM_REG_R1)
-    size = uc.reg_read(UC_ARM_REG_R2)
+    regs = get_general_regs(uc)
+    sregs = get_special_regs(uc)
 
-    uc.mem_write(uc.reg_read(UC_ARM_REG_R0), bytes([value] * size))
-    uc.reg_write(UC_ARM_REG_PC, uc.reg_read(UC_ARM_REG_LR))
+    ptr = uc.reg_read(regs[0])
+    value = uc.reg_read(regs[1])
+    size = uc.reg_read(regs[2])
+
+    logger.debug(f"memset(0x{ptr:x}, 0x{value:x}, 0x{size:x}), pc - 0x{uc.reg_read(sregs[0]):x}, lr - 0x{uc.reg_read(sregs[2]):x}")
+
+    uc.mem_write(ptr, bytes([value] * size))
+    uc.reg_write(sregs[0], uc.reg_read(sregs[2]))
 
 
 def __memclr__(emhook: EmulatorHooker):
